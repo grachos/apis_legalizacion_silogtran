@@ -5,7 +5,10 @@ import { withSession } from '../session.js';
 import { runReport } from './engine.js';
 import { storeGet, storePut, storeClear, storeEnabled } from './store.js';
 
+// Tiered freshness: current month is never cached; previous month (late legalizations) lives
+// CACHE_TTL_HOURS (24h); older months CACHE_TTL_OLD_HOURS (168h = 7 days).
 const TTL_MS = Number(process.env.CACHE_TTL_HOURS ?? 24) * 3_600_000;
+const TTL_OLD_MS = Number(process.env.CACHE_TTL_OLD_HOURS ?? 168) * 3_600_000;
 const MAX_ROWS = Number(process.env.CACHE_MAX_ROWS ?? 250_000);
 const cache = new Map(); // key -> { columns, rows, meta, at } (insertion order = age)
 let cachedRows = 0;
@@ -52,6 +55,15 @@ function currentMonthStart() {
   return `${today.slice(0, 7)}-01`;
 }
 
+function previousMonthStart(monthStart) {
+  let [y, m] = monthStart.split('-').map(Number);
+  if (--m < 1) {
+    m = 12;
+    y--;
+  }
+  return `${y}-${pad(m)}-01`;
+}
+
 function mergeColumns(target, cols) {
   for (const c of cols) if (!target.includes(c)) target.push(c);
 }
@@ -62,6 +74,7 @@ export async function runReportRange(id, def, dates, opts = {}) {
   const useCache = TTL_MS > 0 && (opts.cache ?? def.cache !== false);
   const chunks = splitMonths(dates.startDate, dates.endDate);
   const monthStart = currentMonthStart();
+  const prevStart = previousMonthStart(monthStart);
   const columns = [];
   const rows = [];
   let cacheHits = 0;
@@ -71,12 +84,13 @@ export async function runReportRange(id, def, dates, opts = {}) {
   for (const ch of chunks) {
     const key = `${id}|${opts.variant || 'raw'}|${ch.startDate}|${ch.endDate}`;
     const closed = ch.endDate < monthStart;
+    const ttl = ch.endDate >= prevStart ? TTL_MS : TTL_OLD_MS;
     let part = null;
     let source = 'silogtran';
     const t1 = Date.now();
     if (closed && useCache) {
       const hit = cache.get(key);
-      if (hit && Date.now() - hit.at < TTL_MS) {
+      if (hit && Date.now() - hit.at < ttl) {
         part = hit;
         source = 'memory';
         cache.delete(key); // LRU: mark as most recently used
@@ -84,7 +98,7 @@ export async function runReportRange(id, def, dates, opts = {}) {
       } else {
         // Persistent cache (Supabase): survives Render sleeps and restarts.
         const stored = await storeGet(key);
-        if (stored && Date.now() - stored.at < TTL_MS) {
+        if (stored && Date.now() - stored.at < ttl) {
           part = stored;
           source = 'store';
           cachePut(key, stored);
@@ -123,7 +137,7 @@ export async function runReportRange(id, def, dates, opts = {}) {
   return { source: 'csv-link', columns, rows, meta, months: chunks.length, cacheHits };
 }
 
-export const cacheStats = () => ({ persistent: storeEnabled(), entries: cache.size, rows: cachedRows, maxRows: MAX_ROWS, ttlHours: TTL_MS / 3_600_000 });
+export const cacheStats = () => ({ persistent: storeEnabled(), entries: cache.size, rows: cachedRows, maxRows: MAX_ROWS, ttlHours: { previousMonth: TTL_MS / 3_600_000, olderMonths: TTL_OLD_MS / 3_600_000 } });
 export const clearCache = async () => {
   cache.clear();
   cachedRows = 0;

@@ -34,8 +34,9 @@ curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legal
   automáticamente. Si Silogtran usa otros nombres, fíjalos en `src/reports/index.js` → `fields`
   usando la salida de `/debug`.
 - Peticiones serializadas (PRADO guarda estado por sesión).
-- Rangos largos se dividen por **mes calendario**; los meses cerrados quedan en caché en memoria
-  (`CACHE_TTL_HOURS`, 24 h por defecto; `0` desactiva). El mes en curso siempre se regenera.
+- Rangos largos se dividen por **mes calendario** con caché escalonada: el mes en curso siempre se
+  regenera; el mes anterior dura `CACHE_TTL_HOURS` (24 h, legalizaciones tardías); los meses más
+  antiguos `CACHE_TTL_OLD_HOURS` (168 h = 7 días). `CACHE_TTL_HOURS=0` desactiva la caché.
   El Viaje crudo no se cachea; el cruzado cachea por mes el Viaje **ya filtrado** (solo con la
   exclusión por defecto) y el SAP crudo, y cruza al final sobre todo el rango (un código puede
   tener su SAP en otro mes). Tope de caché `CACHE_MAX_ROWS` (250 000 filas, LRU).
