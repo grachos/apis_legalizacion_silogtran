@@ -12,9 +12,12 @@ Todos bajo `/api` requieren el header `x-api-key: <API_KEY>`.
 | GET | `/api/reports` | Catálogo de informes |
 | GET | `/api/reports/legalizacion-viaje?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización Viaje |
 | GET | `/api/reports/legalizacion-sap?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización SAP |
+| GET | `/api/reports/legalizacion-viaje-sap?fechaInicial=…&fechaFinal=…[&format=csv][&excluirConcepto=A,B]` | Viaje + `placa_sap` cruzada por *Legvia codigo*, sin *Concepto gasto* = PEAJE ELECTRÓNICO (por defecto) |
 | GET | `/api/reports/:name/debug?fechaInicial=…&fechaFinal=…` | Campos detectados + respuesta cruda de Silogtran |
 
 Respuesta JSON: `{ report, filters, source, count, elapsedMs, columns, rows }`.
+El cruzado agrega `stats` (filas por informe, excluidas, sin cruce, columnas usadas) y las columnas `placa_sap`, `cruce_sap`.
+`excluirConcepto` reemplaza la lista por defecto; vacío (`excluirConcepto=`) no excluye nada. La comparación ignora mayúsculas y tildes.
 
 ```bash
 curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legalizacion-sap?fechaInicial=2026-10-01&fechaFinal=2026-10-24"

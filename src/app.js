@@ -5,6 +5,7 @@ import { withSession, sessionActive } from './session.js';
 import { SilogtranError } from './silogtran.js';
 import { REPORTS } from './reports/index.js';
 import { runReport, debugReport } from './reports/engine.js';
+import { runViajeWithSapPlate, DEFAULT_EXCLUDED_CONCEPTS } from './reports/combined.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = Number(process.env.MAX_RANGE_DAYS || 366);
@@ -28,7 +29,14 @@ function requireApiKey(req, res, next) {
 app.use('/api', requireApiKey);
 
 app.get('/api/reports', (_req, res) =>
-  res.json(Object.entries(REPORTS).map(([id, d]) => ({ id, title: d.title, params: ['fechaInicial', 'fechaFinal', 'format'] })))
+  res.json([
+    ...Object.entries(REPORTS).map(([id, d]) => ({ id, title: d.title, params: ['fechaInicial', 'fechaFinal', 'format'] })),
+    {
+      id: 'legalizacion-viaje-sap',
+      title: 'Legalización Viaje + placa SAP (sin PEAJE ELECTRÓNICO)',
+      params: ['fechaInicial', 'fechaFinal', 'format', 'excluirConcepto'],
+    },
+  ])
 );
 
 function parseDates(q) {
@@ -50,26 +58,48 @@ function getReport(req) {
 
 const csvCell = (v) => (/[",\n;]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v);
 
+function send(req, res, name, dates, t0, { columns, rows, ...extra }, filters = {}) {
+  if (req.query.format === 'csv') {
+    const lines = [columns.map(csvCell).join(','), ...rows.map((r) => columns.map((c) => csvCell(String(r[c] ?? ''))).join(','))];
+    res.setHeader('content-disposition', `attachment; filename="${name}_${dates.startDate}_${dates.endDate}.csv"`);
+    return res.type('text/csv; charset=utf-8').send('﻿' + lines.join('\r\n'));
+  }
+  res.json({
+    report: name,
+    filters: { fechaInicial: dates.startDate, fechaFinal: dates.endDate, ...filters },
+    ...extra,
+    count: rows.length,
+    elapsedMs: Date.now() - t0,
+    columns,
+    rows,
+  });
+}
+
+// Viaje + SAP plate (joined by Legvia codigo), excluding Concepto gasto = PEAJE ELECTRÓNICO.
+// Optional ?excluirConcepto=A,B overrides the excluded list (empty value = exclude nothing).
+// Registered before /:name so it is not taken as a report id.
+app.get('/api/reports/legalizacion-viaje-sap', async (req, res, next) => {
+  try {
+    const dates = parseDates(req.query);
+    const excluded =
+      req.query.excluirConcepto === undefined
+        ? DEFAULT_EXCLUDED_CONCEPTS
+        : String(req.query.excluirConcepto).split(',').map((s) => s.trim()).filter(Boolean);
+    const t0 = Date.now();
+    const result = await withSession((c) => runViajeWithSapPlate(c, dates, excluded));
+    send(req, res, 'legalizacion-viaje-sap', dates, t0, result, { excluirConcepto: excluded });
+  } catch (e) {
+    next(e);
+  }
+});
+
 app.get('/api/reports/:name', async (req, res, next) => {
   try {
     const def = getReport(req);
     const dates = parseDates(req.query);
     const t0 = Date.now();
-    const { columns, rows, source } = await withSession((c) => runReport(c, def, dates));
-    if (req.query.format === 'csv') {
-      const lines = [columns.map(csvCell).join(','), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(','))];
-      res.setHeader('content-disposition', `attachment; filename="${req.params.name}_${dates.startDate}_${dates.endDate}.csv"`);
-      return res.type('text/csv; charset=utf-8').send('﻿' + lines.join('\r\n'));
-    }
-    res.json({
-      report: req.params.name,
-      filters: { fechaInicial: dates.startDate, fechaFinal: dates.endDate },
-      source,
-      count: rows.length,
-      elapsedMs: Date.now() - t0,
-      columns,
-      rows,
-    });
+    const result = await withSession((c) => runReport(c, def, dates));
+    send(req, res, req.params.name, dates, t0, result);
   } catch (e) {
     next(e);
   }
