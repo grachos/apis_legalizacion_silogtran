@@ -23,7 +23,7 @@ function findColumn(columns, test, label, reportName) {
 }
 
 const isLegviaCode = (n) => n.includes('legvia') && n.includes('codigo');
-const isPlate = (n) => n.includes('placa');
+const isPlate = (n) => n.includes('placa') || n === 'vehiculo';
 const isConcept = (n) => n.includes('concepto') && n.includes('gasto');
 
 export async function runViajeWithSapPlate(client, dates, excludedConcepts = DEFAULT_EXCLUDED_CONCEPTS) {
@@ -32,7 +32,7 @@ export async function runViajeWithSapPlate(client, dates, excludedConcepts = DEF
 
   const vCode = findColumn(viaje.columns, isLegviaCode, 'Legvia codigo', 'legalizacion-viaje');
   const sCode = findColumn(sap.columns, isLegviaCode, 'Legvia codigo', 'legalizacion-sap');
-  const sPlate = findColumn(sap.columns, isPlate, 'Placa', 'legalizacion-sap');
+  const sPlate = findColumn(sap.columns, isPlate, 'Placa/Vehiculo', 'legalizacion-sap');
   const vConcept = viaje.columns.find((c) => isConcept(norm(c)));
   if (!vConcept && excludedConcepts.length) {
     throw new SilogtranError(`Column 'Concepto gasto' not found in legalizacion-viaje. Columns: ${viaje.columns.join(', ')}`);
