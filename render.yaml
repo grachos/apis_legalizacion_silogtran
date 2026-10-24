@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: apis-legalizacion-silogtran
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: SILOG_BASE_URL
+        value: https://construproyec.colombiasoftware.net
+      - key: SILOG_USER
+        sync: false
+      - key: SILOG_PASSWORD
+        sync: false
+      - key: API_KEY
+        sync: false

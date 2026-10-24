@@ -1,0 +1,43 @@
+# APIs Legalización Silogtran
+
+API REST (sin frontend) que inicia sesión en Silogtran (PRADO) con credenciales de ENV,
+genera informes y los devuelve como JSON o CSV. Desplegada en Render (Docker).
+
+## Endpoints
+Todos bajo `/api` requieren el header `x-api-key: <API_KEY>`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/health` | Estado (público) |
+| GET | `/api/reports` | Catálogo de informes |
+| GET | `/api/reports/legalizacion-viaje?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización Viaje |
+| GET | `/api/reports/legalizacion-sap?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización SAP |
+| GET | `/api/reports/:name/debug?fechaInicial=…&fechaFinal=…` | Campos detectados + respuesta cruda de Silogtran |
+
+Respuesta JSON: `{ report, filters, source, count, elapsedMs, columns, rows }`.
+
+```bash
+curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legalizacion-sap?fechaInicial=2026-10-01&fechaFinal=2026-10-24"
+```
+
+## Cómo funciona
+- Sesión única en memoria; login al primer request y re-login automático si expira.
+- AWS WAF: Chromium headless (incluido en la imagen Docker) obtiene `aws-waf-token`.
+- Los campos del formulario (fechas, *Tipo de Impresión* = CSV, botón *Generar*) se detectan
+  automáticamente. Si Silogtran usa otros nombres, fíjalos en `src/reports/index.js` → `fields`
+  usando la salida de `/debug`.
+- Peticiones serializadas (PRADO guarda estado por sesión).
+
+## Variables de entorno
+Ver `.env.example`: `SILOG_BASE_URL`, `SILOG_USER`, `SILOG_PASSWORD`, `API_KEY` (obligatorias),
+`SILOG_COST_CENTER`, `WAF_CHROME_PATH`, `WAF_WAIT_SEC`, `SILOG_TIMEOUT_SEC`, `MAX_RANGE_DAYS`.
+
+## Local
+```bash
+cp .env.example .env   # completar; en Windows/Mac definir WAF_CHROME_PATH
+npm install && npm run dev
+```
+
+## Render
+New → Blueprint → este repo (usa `render.yaml`), luego completar `SILOG_USER`, `SILOG_PASSWORD`, `API_KEY`.
+En plan free el servicio duerme: la primera llamada tarda ~30–60 s.
