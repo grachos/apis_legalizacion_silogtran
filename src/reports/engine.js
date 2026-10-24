@@ -80,12 +80,16 @@ export function toObjects(matrix) {
 const looksCsv = (r) =>
   /csv|octet-stream|excel|text\/plain/i.test(r.type) || /attachment/i.test(r.headers.get('content-disposition') || '');
 
-function findFileLink(html, baseUrl) {
-  const m =
-    /window\.open\(\s*['"]([^'"]+)['"]/i.exec(html) ||
-    /location(?:\.href)?\s*=\s*['"]([^'"]+\.(?:csv|txt)[^'"]*)['"]/i.exec(html) ||
-    /href=['"]([^'"]+\.(?:csv|txt)[^'"]*)['"]/i.exec(html);
-  return m ? new URL(m[1].replace(/&amp;/g, '&'), baseUrl).href : null;
+// Silogtran answers "Generar" with a script: window.open('../reportes/DOC_<hash>.csv').
+// Pick the window.open that targets a generated file, not unrelated menu scripts.
+const FILE_RE = /(reportes\/|\.(csv|txt|xls|xlsx)(\?|$))/i;
+export function findFileLink(html, baseUrl) {
+  const opens = [...html.matchAll(/window\.open\(\s*['"]([^'"]+)['"]/gi)].map((m) => m[1]);
+  const hit =
+    opens.find((u) => FILE_RE.test(u)) ||
+    /location(?:\.href)?\s*=\s*['"]([^'"]+\.(?:csv|txt)[^'"]*)['"]/i.exec(html)?.[1] ||
+    /href=['"]([^'"]*reportes\/[^'"]+\.(?:csv|txt)[^'"]*)['"]/i.exec(html)?.[1];
+  return hit ? new URL(hit.replace(/&amp;/g, '&'), baseUrl).href : null;
 }
 
 async function parseResponse(client, r) {
@@ -152,6 +156,7 @@ export async function debugReport(client, def, dates) {
       contentType: r.type,
       contentDisposition: r.headers.get('content-disposition'),
       bytes: r.body.length,
+      fileLink: findFileLink(r.text, r.url),
       ...summarizeHtml(r.text),
     },
   };
