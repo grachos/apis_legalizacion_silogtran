@@ -65,7 +65,11 @@ function tableFromHtml(html) {
 }
 
 export function toObjects(matrix) {
-  const [head = [], ...body] = matrix;
+  let [head = [], ...body] = matrix;
+  // Silogtran CSV lines end with a trailing delimiter → drop unnamed columns that are empty in every row.
+  const keep = head.map((h, i) => h !== '' || body.some((r) => (r[i] ?? '') !== ''));
+  head = head.filter((_, i) => keep[i]);
+  body = body.map((r) => r.filter((_, i) => keep[i]));
   const seen = {};
   const columns = head.map((h, i) => {
     let k = h || `col_${i + 1}`;
