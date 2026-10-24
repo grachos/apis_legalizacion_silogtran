@@ -98,9 +98,10 @@ async function parseResponse(client, r) {
   const link = findFileLink(r.text, r.url);
   if (link) {
     const f = await client.request(link);
-    if (looksCsv(f) || !/<html/i.test(f.text)) return { source: 'csv-link', ...parseCsv(f.text) };
-    const t = tableFromHtml(f.text);
-    if (t) return { source: 'html-link', ...t };
+    if (/^\s*(<!doctype|<html)/i.test(f.text)) {
+      throw new SilogtranError(`Report generated but download returned HTML instead of a file (${link}).`);
+    }
+    return { source: 'csv-link', ...parseCsv(f.text) };
   }
   const t = tableFromHtml(r.text);
   if (t) return { source: 'html', ...t };

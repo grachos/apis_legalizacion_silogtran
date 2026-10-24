@@ -29,7 +29,7 @@ export function decode(buf, contentType = '') {
   }
   const utf8 = new TextDecoder('utf-8').decode(buf);
   // Silogtran often serves latin1 without declaring it.
-  return utf8.includes('�') ? new TextDecoder('latin1').decode(buf) : utf8;
+  return utf8.includes('�') ? new TextDecoder('windows-1252').decode(buf) : utf8;
 }
 
 // Fields a browser would send on a PRADO postback (buttons excluded).
@@ -200,14 +200,16 @@ export class Silogtran {
     const { $, form, data } = formFields(r.text);
     const name = 'ctl0$MainModule$centrocosto';
     const field = $(`[name="${name}"]`).first();
-    const wanted = process.env.SILOG_COST_CENTER; // optional: option value or text
+    const wanted = (process.env.SILOG_COST_CENTER || 'CONSTRUPROYEC-PRINCIPAL').toLowerCase();
     if (field.is('select')) {
       const opts = field
         .find('option')
         .toArray()
         .map((o) => ({ value: $(o).attr('value') ?? $(o).text(), text: $(o).text().trim() }))
         .filter((o) => o.value !== '' && !/seleccione/i.test(o.text));
-      const opt = (wanted && opts.find((o) => o.value === wanted || o.text === wanted)) || opts[0];
+      const opt =
+        opts.find((o) => o.value.toLowerCase() === wanted || o.text.toLowerCase().includes(wanted)) || opts[0];
+      if (!opt.text.toLowerCase().includes(wanted)) console.warn(`[login] cost center '${wanted}' not found, using '${opt.text}'`);
       if (!opt) throw new SilogtranError('User has no cost centers available.', { status: 500 });
       data[name] = opt.value;
     } else if (!data[name]) {
