@@ -223,12 +223,23 @@ export async function findCiudad(client, ciudadId) {
 }
 
 // Business rules (approved): country Colombia, departamento/código postal from DANE,
-// fixed delivery email, fiscal address = residence, contact data empty.
-// Obligations are fixed (R-99-PN) on the MyEInvoice side, so they are not part of the output.
+// fixed delivery email, fiscal address = residence, obligations from autorretenedor flags,
+// contact data empty.
 export function toInformacionEconomica(t, city) {
   const depto = city ? DEPARTAMENTOS[city.dane.slice(0, 2)] || '' : '';
   const codigoPostal = city ? city.dane.slice(0, 5) : '';
   const ubicacion = { pais: t.pais || 'Colombia', departamento: depto, ciudad: t.ciudad, direccion: t.direccion, codigoPostal };
+
+  const o15 = t.fiscal.tercero_autoretenedorrenta || t.fiscal.tercero_autoretenedorfuente;
+  const o23 = t.fiscal.tercero_autoretenedoriva;
+  const obligaciones = {
+    'O-13': false, // Gran contribuyente: not available in Silogtran
+    'O-15': o15, // Autorretenedor
+    'O-23': o23, // Agente de retención IVA
+    'O-47': false, // Régimen simple: not available in Silogtran
+    'R-99-PN': !o15 && !o23, // No aplica – Otros
+  };
+  const NAMES = { 'O-13': 'Gran contribuyente', 'O-15': 'Autorretenedor', 'O-23': 'Agente de retención IVA', 'O-47': 'Régimen simple de tributación', 'R-99-PN': 'No aplica – Otros' };
 
   return {
     identificacion: {
@@ -246,7 +257,10 @@ export function toInformacionEconomica(t, city) {
     },
     direccionFiscal: { ...ubicacion },
     contacto: { nombre: '', correo: '', telefono: '', notas: '' },
-    // Obligaciones: not returned — MyEInvoice always uses the fixed value R-99-PN (No aplica – Otros).
+    obligaciones,
+    obligacionesAplicables: Object.entries(obligaciones)
+      .filter(([, v]) => v)
+      .map(([codigo]) => ({ codigo, descripcion: NAMES[codigo] })),
     fuente: { ciudadId: t.ciudadId, ciudadDane: city?.dane || null },
   };
 }
