@@ -173,3 +173,100 @@ export async function debugTercero(client, documento) {
     gridSample: parseResultGrid($).slice(0, 5),
   };
 }
+
+// --- Step 2: city (DANE) + "Información Económica" mapping ------------------
+
+const CITY_PAGE = 'index.php?page=Basicos.Ciudad.Buscar';
+const cityCache = new Map(); // ciudadId -> { dane, nombre } (stable master data)
+
+// 33 departamentos DANE (2 first digits of the municipality code).
+export const DEPARTAMENTOS = {
+  '05': 'Antioquia', '08': 'Atlántico', '11': 'Bogotá D.C.', '13': 'Bolívar', '15': 'Boyacá',
+  '17': 'Caldas', '18': 'Caquetá', '19': 'Cauca', '20': 'Cesar', '23': 'Córdoba',
+  '25': 'Cundinamarca', '27': 'Chocó', '41': 'Huila', '44': 'La Guajira', '47': 'Magdalena',
+  '50': 'Meta', '52': 'Nariño', '54': 'Norte de Santander', '63': 'Quindío', '66': 'Risaralda',
+  '68': 'Santander', '70': 'Sucre', '73': 'Tolima', '76': 'Valle del Cauca', '81': 'Arauca',
+  '85': 'Casanare', '86': 'Putumayo', '88': 'Archipiélago de San Andrés, Providencia y Santa Catalina',
+  '91': 'Amazonas', '94': 'Guainía', '95': 'Guaviare', '97': 'Vaupés', '99': 'Vichada',
+};
+
+export const EMAIL_ENTREGA = 'informacionalproveedor@elogia.com.co';
+
+// DANE codes may lose the leading zero (e.g. Antioquia 05001000 → 5001000).
+export function normalizeDane(raw) {
+  const d = String(raw ?? '').replace(/\D/g, '');
+  return d.length === 7 || d.length === 4 ? `0${d}` : d;
+}
+
+export async function findCiudad(client, ciudadId) {
+  if (cityCache.has(ciudadId)) return cityCache.get(ciudadId);
+  const pg = await client.request(CITY_PAGE);
+  if (isLoginPage(pg.text)) throw expired();
+  const { form, data } = formFields(pg.text);
+  Object.assign(data, {
+    [`${P}ciudad_codigo`]: ciudadId,
+    PRADO_POSTBACK_TARGET: `${P}ctl2`,
+    PRADO_POSTBACK_PARAMETER: '',
+    [`${P}ctl2`]: 'Buscar',
+  });
+  const r = await client.request(new URL(form.attr('action') || CITY_PAGE, pg.url).href, { method: 'POST', form: data });
+  if (isLoginPage(r.text)) throw expired();
+  const $ = cheerio.load(r.text);
+  if (!/formulario de ciudad/i.test(clean($('h2').text()))) {
+    throw new SilogtranError(`City ${ciudadId} not found in Silogtran (no single "Formulario de Ciudad").`);
+  }
+  const dane = normalizeDane(readField($, 'ciudad_codigodane'));
+  if (!/^\d{5,8}$/.test(dane)) throw new SilogtranError(`City ${ciudadId} has no valid DANE code ('${dane}').`);
+  const city = { dane, nombre: readField($, 'ciudad_nombre') || '' };
+  cityCache.set(ciudadId, city);
+  return city;
+}
+
+// Business rules (approved): country Colombia, departamento/código postal from DANE,
+// fixed delivery email, fiscal address = residence, obligations from autorretenedor flags,
+// contact data empty.
+export function toInformacionEconomica(t, city) {
+  const depto = city ? DEPARTAMENTOS[city.dane.slice(0, 2)] || '' : '';
+  const codigoPostal = city ? city.dane.slice(0, 5) : '';
+  const ubicacion = { pais: t.pais || 'Colombia', departamento: depto, ciudad: t.ciudad, direccion: t.direccion, codigoPostal };
+
+  const o15 = t.fiscal.tercero_autoretenedorrenta || t.fiscal.tercero_autoretenedorfuente;
+  const o23 = t.fiscal.tercero_autoretenedoriva;
+  const obligaciones = {
+    'O-13': false, // Gran contribuyente: not available in Silogtran
+    'O-15': o15, // Autorretenedor
+    'O-23': o23, // Agente de retención IVA
+    'O-47': false, // Régimen simple: not available in Silogtran
+    'R-99-PN': !o15 && !o23, // No aplica – Otros
+  };
+  const NAMES = { 'O-13': 'Gran contribuyente', 'O-15': 'Autorretenedor', 'O-23': 'Agente de retención IVA', 'O-47': 'Régimen simple de tributación', 'R-99-PN': 'No aplica – Otros' };
+
+  return {
+    identificacion: {
+      tipoDocumento: t.tipoDocumento,
+      documento: t.documento,
+      tipoPersona: t.tipoPersona,
+      nombre: t.nombreCompleto,
+    },
+    residenciaEntrega: {
+      ...ubicacion,
+      email: t.email,
+      telefono: t.telefono || t.celular,
+      emailEntrega: EMAIL_ENTREGA,
+      confirmarEmailEntrega: EMAIL_ENTREGA,
+    },
+    direccionFiscal: { ...ubicacion },
+    contacto: { nombre: '', correo: '', telefono: '', notas: '' },
+    obligaciones,
+    obligacionesAplicables: Object.entries(obligaciones)
+      .filter(([, v]) => v)
+      .map(([codigo]) => ({ codigo, descripcion: NAMES[codigo] })),
+    fuente: { ciudadId: t.ciudadId, ciudadDane: city?.dane || null },
+  };
+}
+
+export async function getInformacionEconomica(client, documento) {
+  const t = await findTercero(client, documento);
+  const city = t.ciudadId ? await findCiudad(client, t.ciudadId) : null;
+  return toInformacionEconomica(t, city);
+}

@@ -5,7 +5,7 @@ import { withSession, sessionActive } from './session.js';
 import { SilogtranError } from './silogtran.js';
 import { REPORTS } from './reports/index.js';
 import { debugReport } from './reports/engine.js';
-import { findTercero, debugTercero } from './terceros.js';
+import { findTercero, debugTercero, getInformacionEconomica } from './terceros.js';
 import { runReportRange, cacheStats, clearCache } from './reports/range.js';
 import { runViajeWithSapPlate, viajeFilter, DEFAULT_EXCLUDED_CONCEPTS } from './reports/combined.js';
 
@@ -168,8 +168,20 @@ function parseDocumento(req) {
   return d;
 }
 
-// Step 1: raw tercero data from Silogtran (Información Económica mapping comes next).
+// "Información Económica" for the provider screen (tercero + city DANE + business rules).
 app.get('/api/terceros/:documento', async (req, res, next) => {
+  try {
+    const documento = parseDocumento(req);
+    const t0 = Date.now();
+    const info = await withSession((c) => getInformacionEconomica(c, documento));
+    res.json({ ...info, elapsedMs: Date.now() - t0 });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Raw tercero data as read from Silogtran (includes the contacts table).
+app.get('/api/terceros/:documento/raw', async (req, res, next) => {
   try {
     const documento = parseDocumento(req);
     const t0 = Date.now();
