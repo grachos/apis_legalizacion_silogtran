@@ -13,6 +13,8 @@ Todos bajo `/api` requieren el header `x-api-key: <API_KEY>`.
 | GET | `/api/reports/legalizacion-viaje?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv][&anulados=true]` | Informe Legalización Viaje |
 | GET | `/api/reports/legalizacion-sap?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización SAP |
 | GET | `/api/reports/legalizacion-viaje-sap?fechaInicial=…&fechaFinal=…[&format=csv][&excluirConcepto=A,B][&anulados=true]` | Viaje + `placa_sap` cruzada por *Legvia codigo*, sin *Concepto gasto* = PEAJE ELECTRÓNICO (por defecto) |
+| GET | `/api/terceros/:documento` | Tercero por documento (Maestros.Tercero.Buscar) — 404 no existe, 409 varios |
+| GET | `/api/terceros/:documento/debug` | Diagnóstico: estado de la página y campos encontrados |
 | GET | `/api/reports/:name/debug?fechaInicial=…&fechaFinal=…` | Campos detectados + respuesta cruda de Silogtran |
 
 Respuesta JSON: `{ report, filters, source, count, elapsedMs, columns, rows }`.

@@ -5,6 +5,7 @@ import { withSession, sessionActive } from './session.js';
 import { SilogtranError } from './silogtran.js';
 import { REPORTS } from './reports/index.js';
 import { debugReport } from './reports/engine.js';
+import { findTercero, debugTercero } from './terceros.js';
 import { runReportRange, cacheStats, clearCache } from './reports/range.js';
 import { runViajeWithSapPlate, viajeFilter, DEFAULT_EXCLUDED_CONCEPTS } from './reports/combined.js';
 
@@ -159,9 +160,38 @@ app.get('/api/reports/:name/debug', async (req, res, next) => {
   }
 });
 
+// --- Terceros -------------------------------------------------------------
+const DOC_RE = /^[0-9A-Za-z-]{3,20}$/;
+function parseDocumento(req) {
+  const d = String(req.params.documento || '').trim();
+  if (!DOC_RE.test(d)) throw Object.assign(new Error('Invalid documento.'), { status: 400 });
+  return d;
+}
+
+// Step 1: raw tercero data from Silogtran (Información Económica mapping comes next).
+app.get('/api/terceros/:documento', async (req, res, next) => {
+  try {
+    const documento = parseDocumento(req);
+    const t0 = Date.now();
+    const tercero = await withSession((c) => findTercero(c, documento));
+    res.json({ tercero, elapsedMs: Date.now() - t0 });
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.get('/api/terceros/:documento/debug', async (req, res, next) => {
+  try {
+    const documento = parseDocumento(req);
+    res.json(await withSession((c) => debugTercero(c, documento)));
+  } catch (e) {
+    next(e);
+  }
+});
+
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   const status = err.status || (err instanceof SilogtranError ? 502 : 500);
   if (status >= 500) console.error('[error]', err.message);
-  res.status(status).json({ error: err.message });
+  res.status(status).json({ error: err.message, ...(err.details ? { details: err.details } : {}) });
 });
