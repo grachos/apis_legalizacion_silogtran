@@ -5,7 +5,7 @@ import { REPORTS } from './index.js';
 import { runReportRange } from './range.js';
 
 export const DEFAULT_EXCLUDED_CONCEPTS = ['PEAJE ELECTRÓNICO'];
-const variantOf = (list) => `excl:${list.map((x) => norm(x)).sort().join('|')}`;
+const variantOf = (list, anulados = false) => `excl:${list.map((x) => norm(x)).sort().join('|')}|anul:${anulados ? 1 : 0}`;
 
 // Case/accent/space-insensitive comparison key.
 export const norm = (s) =>
@@ -29,27 +29,41 @@ const isLegviaCode = (n) => n.includes('legvia') && n.includes('codigo');
 const isPlate = (n) => n.includes('placa') || n === 'vehiculo';
 const isConcept = (n) => n.includes('concepto') && n.includes('gasto');
 
-// Per-month transform: drop excluded concepts. Runs before caching, so the cache only
-// holds the (much smaller) filtered Viaje rows; the excluded count travels in part.meta.
-function conceptFilter(excludedConcepts) {
+// Per-month transform: drop excluded concepts and (unless anulados=true) voided legalizations,
+// i.e. rows with an empty "Concepto gasto". Runs before caching; counts travel in part.meta.
+export function viajeFilter(excludedConcepts, anulados = false) {
   const excluded = new Set(excludedConcepts.map(norm));
   return (part) => {
-    if (!excluded.size) return { ...part, meta: { viajeRows: part.rows.length, excluded: 0 } };
+    if (!excluded.size && anulados) return { ...part, meta: { viajeRows: part.rows.length, excluded: 0, anulados: 0 } };
     const col = part.columns.find((c) => isConcept(norm(c)));
     if (!col) {
       throw new SilogtranError(`Column 'Concepto gasto' not found in legalizacion-viaje. Columns: ${part.columns.join(', ')}`);
     }
     const ci = part.columns.indexOf(col);
-    const rows = part.rows.filter((r) => !excluded.has(norm(r[ci])));
-    return { columns: part.columns, rows, meta: { viajeRows: part.rows.length, excluded: part.rows.length - rows.length } };
+    let excl = 0;
+    let anul = 0;
+    const rows = part.rows.filter((r) => {
+      const key = norm(r[ci]);
+      if (!key) {
+        if (anulados) return true;
+        anul++;
+        return false;
+      }
+      if (excluded.has(key)) {
+        excl++;
+        return false;
+      }
+      return true;
+    });
+    return { columns: part.columns, rows, meta: { viajeRows: part.rows.length, excluded: excl, anulados: anul } };
   };
 }
 
-export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXCLUDED_CONCEPTS) {
+export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXCLUDED_CONCEPTS, anulados = false) {
   // Filtered Viaje is cached per month (variant keyed by the excluded list); SAP raw is small.
-  const variant = variantOf(excludedConcepts);
+  const variant = variantOf(excludedConcepts, anulados);
   const viaje = await runReportRange('legalizacion-viaje', REPORTS['legalizacion-viaje'], dates, {
-    transform: conceptFilter(excludedConcepts),
+    transform: viajeFilter(excludedConcepts, anulados),
     variant,
     // Only the default exclusion is cached; custom lists (e.g. none → ~200k raw rows) run uncached.
     cache: variant === DEFAULT_VARIANT,
@@ -90,6 +104,7 @@ export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXC
       viajeRows: viaje.meta.viajeRows || 0,
       sapRows: sap.rows.length,
       excludedByConcept: viaje.meta.excluded || 0,
+      excludedAnulados: viaje.meta.anulados || 0,
       unmatched,
       joinKeys: { viaje: vCode, sap: sCode, sapPlate: sPlate, concept: vConcept || null },
     },

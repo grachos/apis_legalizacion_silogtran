@@ -6,7 +6,7 @@ import { SilogtranError } from './silogtran.js';
 import { REPORTS } from './reports/index.js';
 import { debugReport } from './reports/engine.js';
 import { runReportRange, cacheStats, clearCache } from './reports/range.js';
-import { runViajeWithSapPlate, DEFAULT_EXCLUDED_CONCEPTS } from './reports/combined.js';
+import { runViajeWithSapPlate, viajeFilter, DEFAULT_EXCLUDED_CONCEPTS } from './reports/combined.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = Number(process.env.MAX_RANGE_DAYS || 731);
@@ -36,11 +36,15 @@ app.post('/api/cache/clear', (_req, res) => {
 
 app.get('/api/reports', (_req, res) =>
   res.json([
-    ...Object.entries(REPORTS).map(([id, d]) => ({ id, title: d.title, params: ['fechaInicial', 'fechaFinal', 'format'] })),
+    ...Object.entries(REPORTS).map(([id, d]) => ({
+      id,
+      title: d.title,
+      params: ['fechaInicial', 'fechaFinal', 'format', ...(id === 'legalizacion-viaje' ? ['anulados'] : [])],
+    })),
     {
       id: 'legalizacion-viaje-sap',
       title: 'Legalización Viaje + placa SAP (sin PEAJE ELECTRÓNICO)',
-      params: ['fechaInicial', 'fechaFinal', 'format', 'excluirConcepto'],
+      params: ['fechaInicial', 'fechaFinal', 'format', 'excluirConcepto', 'anulados'],
     },
   ])
 );
@@ -54,6 +58,14 @@ function parseDates(q) {
   if (Number.isNaN(days) || days < 0) throw Object.assign(new Error('Invalid date range.'), { status: 400 });
   if (days > MAX_RANGE_DAYS) throw Object.assign(new Error(`Range exceeds ${MAX_RANGE_DAYS} days.`), { status: 400 });
   return { startDate: fechaInicial, endDate: fechaFinal };
+}
+
+// anulados=true includes voided legalizations (rows without "Concepto gasto"); default false.
+function parseAnulados(q) {
+  const v = String(q.anulados ?? 'false').trim().toLowerCase();
+  if (['true', '1', 'si', 'sí'].includes(v)) return true;
+  if (['false', '0', 'no', ''].includes(v)) return false;
+  throw Object.assign(new Error('anulados must be true or false.'), { status: 400 });
 }
 
 function getReport(req) {
@@ -109,9 +121,10 @@ app.get('/api/reports/legalizacion-viaje-sap', async (req, res, next) => {
       req.query.excluirConcepto === undefined
         ? DEFAULT_EXCLUDED_CONCEPTS
         : String(req.query.excluirConcepto).split(',').map((s) => s.trim()).filter(Boolean);
+    const anulados = parseAnulados(req.query);
     const t0 = Date.now();
-    const result = await runViajeWithSapPlate(dates, excluded);
-    await send(req, res, 'legalizacion-viaje-sap', dates, t0, result, { excluirConcepto: excluded });
+    const result = await runViajeWithSapPlate(dates, excluded, anulados);
+    await send(req, res, 'legalizacion-viaje-sap', dates, t0, result, { excluirConcepto: excluded, anulados });
   } catch (e) {
     next(e);
   }
@@ -122,7 +135,13 @@ app.get('/api/reports/:name', async (req, res, next) => {
     const def = getReport(req);
     const dates = parseDates(req.query);
     const t0 = Date.now();
-    const result = await runReportRange(req.params.name, def, dates);
+    if (req.params.name === 'legalizacion-viaje') {
+      // Viaje only: optional removal of voided legalizations (no concept exclusion here).
+      const anulados = parseAnulados(req.query);
+      const { meta, ...result } = await runReportRange(req.params.name, def, dates, { transform: viajeFilter([], anulados) });
+      return await send(req, res, req.params.name, dates, t0, { ...result, stats: { viajeRows: meta.viajeRows || 0, excludedAnulados: meta.anulados || 0 } }, { anulados });
+    }
+    const { meta, ...result } = await runReportRange(req.params.name, def, dates);
     await send(req, res, req.params.name, dates, t0, result);
   } catch (e) {
     next(e);
