@@ -152,7 +152,37 @@ export async function debugReport(client, def, dates) {
       contentType: r.type,
       contentDisposition: r.headers.get('content-disposition'),
       bytes: r.body.length,
-      preview: r.text.replace(/\s+/g, ' ').slice(0, 3000),
+      ...summarizeHtml(r.text),
     },
+  };
+}
+
+// Skip the big menu: report the form area text, messages, tables and file-opening scripts.
+function summarizeHtml(html) {
+  if (!/<html|<form|<table/i.test(html)) return { preview: html.slice(0, 3000) };
+  const $ = cheerio.load(html);
+  const clean = (s) => s.replace(/\s+/g, ' ').trim();
+  const scripts = $('script')
+    .toArray()
+    .map((s) => $(s).html() || '')
+    .filter((s) => !s.includes('_sessionBuscador') && !s.includes('nobackbutton') && !s.includes('ocultarSubMenus') && /open\(|location|\.(csv|pdf|xls|txt)|reporte|informe|download|descarg|alert\(/i.test(s))
+    .map((s) => clean(s).slice(0, 800));
+  const messages = $('[id*=Error], [id*=Mensaje], [id*=mensaje], .error, .mensaje, .fallavalidacion, [id*=ctl0_MainModule_ctl][style*=color]')
+    .toArray()
+    .map((e) => clean($(e).text()))
+    .filter(Boolean);
+  const tables = $('table')
+    .toArray()
+    .map((t) => ({ id: $(t).attr('id') || null, rows: $(t).find('tr').length, firstRow: clean($(t).find('tr').first().text()).slice(0, 200) }))
+    .filter((t) => t.rows > 1);
+  const iframes = $('iframe, embed, object').toArray().map((e) => $(e).attr('src') || $(e).attr('data'));
+  $('script, style, ul, nav').remove();
+  const form = $('form').first();
+  return {
+    messages,
+    scripts,
+    iframes,
+    tables: tables.slice(0, 20),
+    formText: clean(form.length ? form.text() : $('body').text()).slice(0, 2500),
   };
 }
