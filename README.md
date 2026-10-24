@@ -1,61 +1,171 @@
 # APIs Legalización Silogtran
 
-API REST (sin frontend) que inicia sesión en Silogtran (PRADO) con credenciales de ENV,
-genera informes y los devuelve como JSON o CSV. Desplegada en Render (Docker).
+API REST (sin frontend) que entra a **Silogtran** (TMS hecho en PRADO/PHP, sin API oficial) con un
+usuario de servicio, genera informes y consulta terceros, y devuelve los datos como **JSON** o **CSV**.
+Corre en **Render** (Docker) con caché persistente en **Supabase**.
+
+> ¿Primera vez? Lee la [Guía para principiantes](docs/GUIA_PRINCIPIANTES.md): explica todo el
+> proyecto en palabras simples.
+
+- **URL:** `https://apis-legalizacion-silogtran.onrender.com`
+- **Autenticación:** header `x-api-key: <API_KEY>` en todo lo que está bajo `/api`.
+
+---
 
 ## Endpoints
-Todos bajo `/api` requieren el header `x-api-key: <API_KEY>`.
+
+### Informes de legalización
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/health` | Estado (público) |
-| GET | `/api/reports` | Catálogo de informes |
-| GET | `/api/reports/legalizacion-viaje?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv][&anulados=true]` | Informe Legalización Viaje |
-| GET | `/api/reports/legalizacion-sap?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización SAP |
-| GET | `/api/reports/legalizacion-viaje-sap?fechaInicial=…&fechaFinal=…[&format=csv][&excluirConcepto=A,B][&anulados=true]` | Viaje + `placa_sap` cruzada por *Legvia codigo*, sin *Concepto gasto* = PEAJE ELECTRÓNICO (por defecto) |
-| GET | `/api/terceros/:documento` | **Información Económica** del proveedor: tercero + ciudad (DANE → departamento y código postal), email de entrega fijo, dirección fiscal = residencia, obligaciones (O-15, O-23, R-99-PN). 404 no existe, 409 varios |
-| GET | `/api/terceros/:documento/raw` | Datos crudos del tercero leídos de Silogtran (incluye contactos) |
-| GET | `/api/terceros/:documento/debug` | Diagnóstico: estado de la página y campos encontrados |
-| GET | `/api/reports/:name/debug?fechaInicial=…&fechaFinal=…` | Campos detectados + respuesta cruda de Silogtran |
+| GET | `/api/reports/legalizacion-sap` | Informe Legalización SAP |
+| GET | `/api/reports/legalizacion-viaje` | Informe Legalización Viaje (sin anulados por defecto) |
+| GET | `/api/reports/legalizacion-viaje-sap` | Viaje + `placa_sap` cruzada por *Legvia codigo*, sin PEAJE ELECTRÓNICO ni anulados |
+| GET | `/api/reports` | Catálogo de informes y parámetros |
+| GET | `/api/reports/:name/debug` | Campos detectados en el formulario + resumen de la respuesta de Silogtran |
 
-Respuesta JSON: `{ report, filters, source, count, elapsedMs, columns, rows }`.
-El cruzado agrega `stats` (filas por informe, excluidas, sin cruce, columnas usadas) y las columnas `placa_sap`, `cruce_sap`.
-`excluirConcepto` reemplaza la lista por defecto; vacío (`excluirConcepto=`) no excluye nada. La comparación ignora mayúsculas y tildes.
-`anulados` (Viaje y cruzado): `false` por defecto excluye legalizaciones anuladas (filas sin *Concepto gasto*); `true` las incluye. `stats.excludedAnulados` cuenta las excluidas.
+**Parámetros**
+
+| Parámetro | Aplica a | Valores | Por defecto |
+|---|---|---|---|
+| `fechaInicial`, `fechaFinal` | todos (obligatorios) | `YYYY-MM-DD`, rango máx. `MAX_RANGE_DAYS` | — |
+| `format` | todos | `json` \| `csv` | `json` |
+| `anulados` | viaje, viaje-sap | `true` \| `false` (anulada = fila sin *Concepto gasto*) | `false` (los excluye) |
+| `excluirConcepto` | viaje-sap | lista separada por comas; vacío = no excluir | `PEAJE ELECTRÓNICO` |
+
+Las comparaciones de concepto ignoran mayúsculas y tildes.
+
+**Respuesta JSON:** `{ report, filters, source, months, cacheHits, count, elapsedMs, columns, rows }`.
+El cruzado agrega `stats` (`viajeRows`, `sapRows`, `excludedByConcept`, `excludedAnulados`,
+`unmatched`, `joinKeys`) y las columnas `placa_sap`, `cruce_sap`. Para volúmenes grandes usa
+`format=csv` (la mitad de tamaño).
 
 ```bash
-curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legalizacion-sap?fechaInicial=2026-10-01&fechaFinal=2026-10-24"
+curl -H "x-api-key: $API_KEY" \
+  "https://apis-legalizacion-silogtran.onrender.com/api/reports/legalizacion-viaje-sap?fechaInicial=2026-01-01&fechaFinal=2026-10-24&format=csv" \
+  -o viaje_sap.csv
 ```
 
+### Terceros (para el RPA de MyEInvoice)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/api/terceros/:documento` | "Información Económica" del proveedor |
+| GET | `/api/terceros/:documento/raw` | Datos tal como se leen de Silogtran (incluye indicadores fiscales y contactos) |
+| GET | `/api/terceros/:documento/debug` | Estado de la página y campos encontrados |
+
+Reglas de `/api/terceros/:documento`:
+- Tercero: `Maestros.Tercero.Buscar` (filtro `tercero_documento`, botón `ctl3`).
+- Ciudad: `Basicos.Ciudad.Buscar` con el `IDHidden` de la ciudad → `ciudad_codigodane`
+  (en memoria, no cambia). Si el DANE viene sin cero inicial (`5001000`) se corrige.
+- **País** Colombia · **Departamento** = 2 primeros dígitos del DANE (tabla de 33 departamentos) ·
+  **Código postal** = 5 primeros dígitos del DANE.
+- **Email entrega / confirmar**: fijo `informacionalproveedor@elogia.com.co`.
+- **Dirección fiscal** = residencia. **Contacto**: vacío.
+- **Obligaciones**: O-15 si autorretenedor renta o fuente; O-23 si autorretenedor IVA; O-13 y O-47
+  siempre `false`; R-99-PN si no aplica ninguna. *(El RPA de MyEInvoice fija R-99-PN en pantalla.)*
+- No expone cuenta bancaria, EPS/ARL ni licencia.
+- Errores: `404` no existe, `409` varios resultados (con `details`), `400` documento inválido, `502` Silogtran.
+
+```bash
+curl -H "x-api-key: $API_KEY" "https://apis-legalizacion-silogtran.onrender.com/api/terceros/7308756"
+```
+
+### Utilidades
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/health` | Público. Estado, sesión y caché (`persistent`, filas, TTL) |
+| POST | `/api/cache/clear` | Vacía la caché en memoria y en Supabase |
+
+---
+
 ## Cómo funciona
-- Sesión única en memoria; login al primer request y re-login automático si expira.
-- AWS WAF: Chromium headless (incluido en la imagen Docker) obtiene `aws-waf-token`.
-- Los campos del formulario (fechas, *Tipo de Impresión* = CSV, botón *Generar*) se detectan
-  automáticamente. Si Silogtran usa otros nombres, fíjalos en `src/reports/index.js` → `fields`
-  usando la salida de `/debug`.
-- Peticiones serializadas (PRADO guarda estado por sesión).
-- Rangos largos se dividen por **mes calendario** con caché escalonada: el mes en curso siempre se
-  regenera; el mes anterior dura `CACHE_TTL_HOURS` (24 h, legalizaciones tardías); los meses más
-  antiguos `CACHE_TTL_OLD_HOURS` (168 h = 7 días). `CACHE_TTL_HOURS=0` desactiva la caché.
-  El Viaje crudo no se cachea; el cruzado cachea por mes el Viaje **ya filtrado** (solo con la
-  exclusión por defecto) y el SAP crudo, y cruza al final sobre todo el rango (un código puede
-  tener su SAP en otro mes). Tope de caché `CACHE_MAX_ROWS` (250 000 filas, LRU).
-  **Caché persistente (opcional):** con `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` los meses cerrados
-  también se guardan en Supabase (tabla `silog_report_cache`, gzip+base64, RLS sin políticas),
-  así sobreviven a que Render duerma o reinicie. Retención `SUPABASE_CACHE_RETENTION_DAYS` (30).
-  `POST /api/cache/clear` vacía memoria y Supabase. Rango máximo `MAX_RANGE_DAYS` (731 por defecto).
-  Los logs muestran filas y tiempo por mes (`[report] ...`).
+
+1. **Login PRADO** (`src/silogtran.js`): GET a la página de login → POST con usuario/clave y
+   `PRADO_POSTBACK_TARGET` → selección de centro de costo (`SILOG_COST_CENTER`, por defecto
+   `CONSTRUPROYEC-PRINCIPAL`). Cookies en un *jar* en memoria; re-login automático si la respuesta
+   vuelve al login. Peticiones serializadas (PRADO guarda estado por sesión).
+2. **AWS WAF**: si Silogtran responde con un *challenge*, Chromium headless (incluido en la imagen)
+   obtiene la cookie `aws-waf-token` y se reintenta.
+3. **Informes** (`src/reports/engine.js`): GET al formulario → se envían todos los campos
+   (incl. `PRADO_PAGESTATE`) + fechas + *Tipo de Impresión* = CSV + botón *Generar*. Silogtran
+   responde `window.open('../reportes/DOC_<hash>.csv')`; se descarga ese CSV y se parsea
+   (delimitador automático, Windows-1252, se elimina la columna vacía final).
+4. **Rangos largos** (`src/reports/range.js`): se dividen por mes calendario y se unen.
+5. **Cruce** (`src/reports/combined.js`): índice SAP *Legvia codigo → Vehiculo* sobre todo el rango
+   (un código puede tener su SAP en otro mes), filtro de conceptos y anulados por mes.
+6. **Salida en streaming**: JSON/CSV se escriben por bloques (no se arma todo en memoria).
+
+### Caché
+
+| Mes | Vida |
+|---|---|
+| En curso | Nunca se cachea (siempre desde Silogtran) |
+| Anterior | `CACHE_TTL_HOURS` (24 h, por legalizaciones tardías) |
+| Más antiguos | `CACHE_TTL_OLD_HOURS` (168 h = 7 días) |
+
+- Orden de búsqueda: **memoria → Supabase → Silogtran**.
+- Memoria: tope `CACHE_MAX_ROWS` (250 000 filas, LRU).
+- Viaje crudo no se cachea; se cachea el Viaje **ya filtrado** del cruzado (solo con la exclusión
+  por defecto) y SAP crudo.
+- Supabase (`src/reports/store.js`): tabla `public.silog_report_cache` (gzip + base64, RLS activo
+  sin políticas → solo la clave secreta del servidor accede). Retención
+  `SUPABASE_CACHE_RETENTION_DAYS` (30). Si Supabase falla, la API sigue con Silogtran.
+
+---
 
 ## Variables de entorno
-Ver `.env.example`: `SILOG_BASE_URL`, `SILOG_USER`, `SILOG_PASSWORD`, `API_KEY` (obligatorias),
-`SILOG_COST_CENTER`, `CACHE_TTL_HOURS`, `WAF_CHROME_PATH`, `WAF_WAIT_SEC`, `SILOG_TIMEOUT_SEC`, `MAX_RANGE_DAYS`.
+
+| Variable | Obligatoria | Descripción |
+|---|---|---|
+| `SILOG_BASE_URL` | sí | `https://construproyec.colombiasoftware.net` |
+| `SILOG_USER`, `SILOG_PASSWORD` | sí | Usuario de servicio de Silogtran |
+| `API_KEY` | sí | Clave estática del header `x-api-key` (`openssl rand -hex 32`) |
+| `SILOG_COST_CENTER` | no | Centro de costo (coincidencia parcial). Def. `CONSTRUPROYEC-PRINCIPAL` |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | no | Activan la caché persistente |
+| `SUPABASE_CACHE_RETENTION_DAYS` | no | Def. 30 |
+| `CACHE_TTL_HOURS` / `CACHE_TTL_OLD_HOURS` | no | Def. 24 / 168. `CACHE_TTL_HOURS=0` desactiva caché |
+| `CACHE_MAX_ROWS` | no | Def. 250000 |
+| `MAX_RANGE_DAYS` | no | Def. 731 |
+| `WAF_CHROME_PATH` | no | Ruta de Chrome (la imagen Docker ya trae `/usr/bin/chromium`) |
+| `WAF_WAIT_SEC`, `SILOG_TIMEOUT_SEC` | no | Def. 30 / 120 |
+
+---
+
+## Estructura
+
+```
+server.js                 # arranque (sin timeout de petición para barridos largos)
+src/app.js                # rutas, API key, streaming JSON/CSV, errores
+src/silogtran.js          # cliente PRADO: cookies, login, centro de costo, WAF
+src/session.js            # sesión única compartida + re-login
+src/terceros.js           # tercero + ciudad DANE + Información Económica
+src/reports/index.js      # catálogo de informes y nombres de campos PRADO
+src/reports/engine.js     # formulario → Generar → descarga del CSV
+src/reports/csv.js        # parser CSV
+src/reports/range.js      # división por meses + caché escalonada
+src/reports/store.js      # caché persistente en Supabase
+src/reports/combined.js   # cruce Viaje + SAP, filtros de concepto y anulados
+Dockerfile · render.yaml · .env.example
+docs/GUIA_PRINCIPIANTES.md
+```
+
+---
+
+## Despliegue y operación
+
+- **Render (free, Docker)**: servicio `apis-legalizacion-silogtran`, región Virginia. Variables en
+  *Environment*. Si GitHub no está conectado a Render, los deploys se lanzan con *Manual Deploy*.
+- **Supabase**: proyecto `graziany.answer@gmail.com's Project` (us-east-1), tabla `silog_report_cache`.
+- **cron-job.org**: GET a `/health` cada 10 min, lunes a sábado 6:00–19:50 (America/Bogota), para
+  que Render no se duerma en horario laboral (~365 h/mes de las 750 gratis).
+- Plan free de Render: se duerme tras 15 min sin tráfico (despertar ~1 min); 750 h/mes por
+  workspace; disco efímero (por eso la caché persistente va en Supabase).
 
 ## Local
+
 ```bash
 cp .env.example .env   # completar; en Windows/Mac definir WAF_CHROME_PATH
 npm install && npm run dev
 ```
-
-## Render
-New → Blueprint → este repo (usa `render.yaml`), luego completar `SILOG_USER`, `SILOG_PASSWORD`, `API_KEY`.
-En plan free el servicio duerme: la primera llamada tarda ~30–60 s.
