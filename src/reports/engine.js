@@ -26,6 +26,8 @@ export function inspectForm(html, overrides = {}) {
     }
   });
 
+  if (printType && overrides.printValue) printValue = overrides.printValue;
+
   let button = overrides.button;
   let buttonId;
   let buttonValue = 'Generar';
