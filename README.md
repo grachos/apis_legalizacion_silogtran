@@ -13,7 +13,7 @@ Todos bajo `/api` requieren el header `x-api-key: <API_KEY>`.
 | GET | `/api/reports/legalizacion-viaje?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv][&anulados=true]` | Informe Legalización Viaje |
 | GET | `/api/reports/legalizacion-sap?fechaInicial=YYYY-MM-DD&fechaFinal=YYYY-MM-DD[&format=csv]` | Informe Legalización SAP |
 | GET | `/api/reports/legalizacion-viaje-sap?fechaInicial=…&fechaFinal=…[&format=csv][&excluirConcepto=A,B][&anulados=true]` | Viaje + `placa_sap` cruzada por *Legvia codigo*, sin *Concepto gasto* = PEAJE ELECTRÓNICO (por defecto) |
-| GET | `/api/terceros/:documento` | **Información Económica** del proveedor: tercero + ciudad (DANE → departamento y código postal), email de entrega fijo, dirección fiscal = residencia, obligaciones (O-15, O-23, R-99-PN). 404 no existe, 409 varios |
+| GET | `/api/terceros/:documento` | **Información Económica** del proveedor: tercero + ciudad (DANE → departamento y código postal), email de entrega fijo, dirección fiscal = residencia. Las obligaciones no se devuelven (MyEInvoice usa fijo R-99-PN). 404 no existe, 409 varios |
 | GET | `/api/terceros/:documento/raw` | Datos crudos del tercero leídos de Silogtran (incluye contactos) |
 | GET | `/api/terceros/:documento/debug` | Diagnóstico: estado de la página y campos encontrados |
 | GET | `/api/reports/:name/debug?fechaInicial=…&fechaFinal=…` | Campos detectados + respuesta cruda de Silogtran |
