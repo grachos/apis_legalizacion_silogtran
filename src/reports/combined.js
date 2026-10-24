@@ -5,6 +5,7 @@ import { REPORTS } from './index.js';
 import { runReportRange } from './range.js';
 
 export const DEFAULT_EXCLUDED_CONCEPTS = ['PEAJE ELECTRÓNICO'];
+const variantOf = (list) => `excl:${list.map((x) => norm(x)).sort().join('|')}`;
 
 // Case/accent/space-insensitive comparison key.
 export const norm = (s) =>
@@ -22,23 +23,45 @@ function findColumn(columns, test, label, reportName) {
   return col;
 }
 
+const DEFAULT_VARIANT = variantOf(DEFAULT_EXCLUDED_CONCEPTS);
+
 const isLegviaCode = (n) => n.includes('legvia') && n.includes('codigo');
 const isPlate = (n) => n.includes('placa') || n === 'vehiculo';
 const isConcept = (n) => n.includes('concepto') && n.includes('gasto');
 
+// Per-month transform: drop excluded concepts. Runs before caching, so the cache only
+// holds the (much smaller) filtered Viaje rows; the excluded count travels in part.meta.
+function conceptFilter(excludedConcepts) {
+  const excluded = new Set(excludedConcepts.map(norm));
+  return (part) => {
+    if (!excluded.size) return { ...part, meta: { viajeRows: part.rows.length, excluded: 0 } };
+    const col = part.columns.find((c) => isConcept(norm(c)));
+    if (!col) {
+      throw new SilogtranError(`Column 'Concepto gasto' not found in legalizacion-viaje. Columns: ${part.columns.join(', ')}`);
+    }
+    const ci = part.columns.indexOf(col);
+    const rows = part.rows.filter((r) => !excluded.has(norm(r[ci])));
+    return { columns: part.columns, rows, meta: { viajeRows: part.rows.length, excluded: part.rows.length - rows.length } };
+  };
+}
+
 export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXCLUDED_CONCEPTS) {
-  const viaje = await runReportRange('legalizacion-viaje', REPORTS['legalizacion-viaje'], dates);
+  // Filtered Viaje is cached per month (variant keyed by the excluded list); SAP raw is small.
+  const variant = variantOf(excludedConcepts);
+  const viaje = await runReportRange('legalizacion-viaje', REPORTS['legalizacion-viaje'], dates, {
+    transform: conceptFilter(excludedConcepts),
+    variant,
+    // Only the default exclusion is cached; custom lists (e.g. none → ~200k raw rows) run uncached.
+    cache: variant === DEFAULT_VARIANT,
+  });
   const sap = await runReportRange('legalizacion-sap', REPORTS['legalizacion-sap'], dates);
 
   const vCode = findColumn(viaje.columns, isLegviaCode, 'Legvia codigo', 'legalizacion-viaje');
   const sCode = findColumn(sap.columns, isLegviaCode, 'Legvia codigo', 'legalizacion-sap');
   const sPlate = findColumn(sap.columns, isPlate, 'Placa/Vehiculo', 'legalizacion-sap');
   const vConcept = viaje.columns.find((c) => isConcept(norm(c)));
-  if (!vConcept && excludedConcepts.length) {
-    throw new SilogtranError(`Column 'Concepto gasto' not found in legalizacion-viaje. Columns: ${viaje.columns.join(', ')}`);
-  }
 
-  // Index SAP plates by code; a code with several distinct plates keeps them all.
+  // Join over the FULL range: a code's SAP row may fall in a different month than its Viaje row.
   const plates = new Map();
   const sCodeI = sap.columns.indexOf(sCode);
   const sPlateI = sap.columns.indexOf(sPlate);
@@ -50,21 +73,13 @@ export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXC
     plates.get(key).add(plate);
   }
 
-  const excluded = new Set(excludedConcepts.map(norm));
-  let excludedCount = 0;
   let unmatched = 0;
-  const rows = [];
   const vCodeI = viaje.columns.indexOf(vCode);
-  const vConceptI = vConcept ? viaje.columns.indexOf(vConcept) : -1;
-  for (const r of viaje.rows) {
-    if (vConceptI >= 0 && excluded.has(norm(r[vConceptI]))) {
-      excludedCount++;
-      continue;
-    }
+  const rows = viaje.rows.map((r) => {
     const found = plates.get(String(r[vCodeI] ?? '').trim());
     if (!found) unmatched++;
-    rows.push([...r, found ? [...found].join(', ') : '', Boolean(found)]);
-  }
+    return [...r, found ? [...found].join(', ') : '', Boolean(found)];
+  });
 
   return {
     columns: [...viaje.columns, 'placa_sap', 'cruce_sap'],
@@ -72,9 +87,9 @@ export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXC
     months: viaje.months,
     cacheHits: viaje.cacheHits + sap.cacheHits,
     stats: {
-      viajeRows: viaje.rows.length,
+      viajeRows: viaje.meta.viajeRows || 0,
       sapRows: sap.rows.length,
-      excludedByConcept: excludedCount,
+      excludedByConcept: viaje.meta.excluded || 0,
       unmatched,
       joinKeys: { viaje: vCode, sap: sCode, sapPlate: sPlate, concept: vConcept || null },
     },

@@ -32,6 +32,9 @@ curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legal
 - Peticiones serializadas (PRADO guarda estado por sesión).
 - Rangos largos se dividen por **mes calendario**; los meses cerrados quedan en caché en memoria
   (`CACHE_TTL_HOURS`, 24 h por defecto; `0` desactiva). El mes en curso siempre se regenera.
+  El Viaje crudo no se cachea; el cruzado cachea por mes el Viaje **ya filtrado** (solo con la
+  exclusión por defecto) y el SAP crudo, y cruza al final sobre todo el rango (un código puede
+  tener su SAP en otro mes). Tope de caché `CACHE_MAX_ROWS` (250 000 filas, LRU).
   `POST /api/cache/clear` vacía la caché. Rango máximo `MAX_RANGE_DAYS` (731 por defecto).
   Los logs muestran filas y tiempo por mes (`[report] ...`).
 

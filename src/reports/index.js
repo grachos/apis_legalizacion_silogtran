@@ -5,6 +5,7 @@ export const REPORTS = {
   'legalizacion-viaje': {
     title: 'Informe Legalización Viaje',
     page: 'index.php?page=Despacho.Legalizacionviaje_017.InformeLegalizacionViaje',
+    cache: false, // raw Viaje is huge (~200k rows/year); only the filtered version is cached
     fields: {
       startDate: 'ctl0$MainModule$viaemp_fechainicial',
       endDate: 'ctl0$MainModule$viaemp_fechafinal',
