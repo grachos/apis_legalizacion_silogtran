@@ -39,7 +39,10 @@ curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legal
   El Viaje crudo no se cachea; el cruzado cachea por mes el Viaje **ya filtrado** (solo con la
   exclusión por defecto) y el SAP crudo, y cruza al final sobre todo el rango (un código puede
   tener su SAP en otro mes). Tope de caché `CACHE_MAX_ROWS` (250 000 filas, LRU).
-  `POST /api/cache/clear` vacía la caché. Rango máximo `MAX_RANGE_DAYS` (731 por defecto).
+  **Caché persistente (opcional):** con `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` los meses cerrados
+  también se guardan en Supabase (tabla `silog_report_cache`, gzip+base64, RLS sin políticas),
+  así sobreviven a que Render duerma o reinicie. Retención `SUPABASE_CACHE_RETENTION_DAYS` (30).
+  `POST /api/cache/clear` vacía memoria y Supabase. Rango máximo `MAX_RANGE_DAYS` (731 por defecto).
   Los logs muestran filas y tiempo por mes (`[report] ...`).
 
 ## Variables de entorno

@@ -13,3 +13,7 @@ services:
         sync: false
       - key: API_KEY
         sync: false
+      - key: SUPABASE_URL
+        value: https://nexczcdmwysulvvxldlf.supabase.co
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

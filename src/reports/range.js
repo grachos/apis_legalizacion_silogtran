@@ -3,6 +3,7 @@
 // the current month (America/Bogota) is always regenerated.
 import { withSession } from '../session.js';
 import { runReport } from './engine.js';
+import { storeGet, storePut, storeClear, storeEnabled } from './store.js';
 
 const TTL_MS = Number(process.env.CACHE_TTL_HOURS ?? 24) * 3_600_000;
 const MAX_ROWS = Number(process.env.CACHE_MAX_ROWS ?? 250_000);
@@ -70,14 +71,28 @@ export async function runReportRange(id, def, dates, opts = {}) {
   for (const ch of chunks) {
     const key = `${id}|${opts.variant || 'raw'}|${ch.startDate}|${ch.endDate}`;
     const closed = ch.endDate < monthStart;
-    const hit = closed && useCache ? cache.get(key) : null;
-    let part;
+    let part = null;
+    let source = 'silogtran';
     const t1 = Date.now();
-    if (hit && Date.now() - hit.at < TTL_MS) {
-      part = hit;
+    if (closed && useCache) {
+      const hit = cache.get(key);
+      if (hit && Date.now() - hit.at < TTL_MS) {
+        part = hit;
+        source = 'memory';
+        cache.delete(key); // LRU: mark as most recently used
+        cache.set(key, hit);
+      } else {
+        // Persistent cache (Supabase): survives Render sleeps and restarts.
+        const stored = await storeGet(key);
+        if (stored && Date.now() - stored.at < TTL_MS) {
+          part = stored;
+          source = 'store';
+          cachePut(key, stored);
+        }
+      }
+    }
+    if (part) {
       cacheHits++;
-      cache.delete(key); // LRU: mark as most recently used
-      cache.set(key, hit);
     } else {
       try {
         part = await withSession((c) => runReport(c, def, ch));
@@ -86,9 +101,13 @@ export async function runReportRange(id, def, dates, opts = {}) {
         e.message = `[${id} ${ch.startDate}..${ch.endDate}] ${e.message}`;
         throw e;
       }
-      if (closed && useCache) cachePut(key, { columns: part.columns, rows: part.rows, meta: part.meta, at: Date.now() });
+      if (closed && useCache) {
+        const entry = { columns: part.columns, rows: part.rows, meta: part.meta, at: Date.now() };
+        cachePut(key, entry);
+        await storePut(key, entry);
+      }
     }
-    console.log(`[report] ${id} ${ch.startDate}..${ch.endDate} rows=${part.rows.length} ${Date.now() - t1}ms${part === hit ? ' (cache)' : ''}`);
+    console.log(`[report] ${id} ${ch.startDate}..${ch.endDate} rows=${part.rows.length} ${Date.now() - t1}ms (${source})`);
     for (const [k, v] of Object.entries(part.meta || {})) meta[k] = (meta[k] || 0) + v;
     if (!columns.length) columns.push(...part.columns);
     if (part.columns.length === columns.length && part.columns.every((c, i) => c === columns[i])) {
@@ -104,8 +123,9 @@ export async function runReportRange(id, def, dates, opts = {}) {
   return { source: 'csv-link', columns, rows, meta, months: chunks.length, cacheHits };
 }
 
-export const cacheStats = () => ({ entries: cache.size, rows: cachedRows, maxRows: MAX_ROWS, ttlHours: TTL_MS / 3_600_000 });
-export const clearCache = () => {
+export const cacheStats = () => ({ persistent: storeEnabled(), entries: cache.size, rows: cachedRows, maxRows: MAX_ROWS, ttlHours: TTL_MS / 3_600_000 });
+export const clearCache = async () => {
   cache.clear();
   cachedRows = 0;
+  await storeClear();
 };

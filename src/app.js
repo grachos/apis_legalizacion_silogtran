@@ -30,9 +30,13 @@ function requireApiKey(req, res, next) {
 }
 app.use('/api', requireApiKey);
 
-app.post('/api/cache/clear', (_req, res) => {
-  clearCache();
-  res.json({ ok: true });
+app.post('/api/cache/clear', async (_req, res, next) => {
+  try {
+    await clearCache();
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
 });
 
 app.get('/api/reports', (_req, res) =>
