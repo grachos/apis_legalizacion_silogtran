@@ -63,8 +63,15 @@ export async function runReportRange(id, def, dates) {
       if (closed && TTL_MS > 0) cache.set(key, { columns: part.columns, rows: part.rows, at: Date.now() });
     }
     console.log(`[report] ${id} ${ch.startDate}..${ch.endDate} rows=${part.rows.length} ${Date.now() - t1}ms${part === hit ? ' (cache)' : ''}`);
-    mergeColumns(columns, part.columns);
-    for (const r of part.rows) rows.push(r);
+    if (!columns.length) columns.push(...part.columns);
+    if (part.columns.length === columns.length && part.columns.every((c, i) => c === columns[i])) {
+      for (const r of part.rows) rows.push(r);
+    } else {
+      // Month with a different column set: realign rows to the merged columns.
+      mergeColumns(columns, part.columns);
+      const idx = columns.map((c) => part.columns.indexOf(c));
+      for (const r of part.rows) rows.push(idx.map((i) => (i < 0 ? '' : r[i])));
+    }
   }
   console.log(`[report] ${id} ${dates.startDate}..${dates.endDate} total rows=${rows.length} months=${chunks.length} cache=${cacheHits} ${Date.now() - t0}ms`);
   return { source: 'csv-link', columns, rows, months: chunks.length, cacheHits };

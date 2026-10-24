@@ -77,7 +77,8 @@ export function toObjects(matrix) {
     else seen[k] = 1;
     return k;
   });
-  const rows = body.map((r) => Object.fromEntries(columns.map((c, i) => [c, r[i] ?? ''])));
+  // Rows are kept as arrays aligned with `columns` (much lighter than objects for 100k+ rows).
+  const rows = body.map((r) => columns.map((_, i) => r[i] ?? ''));
   return { columns, rows };
 }
 

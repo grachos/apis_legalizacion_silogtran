@@ -62,23 +62,41 @@ function getReport(req) {
   return def;
 }
 
-const csvCell = (v) => (/[",\n;]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v);
+const csvCell = (v) => {
+  const s = String(v ?? '');
+  return /[",\r\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
-function send(req, res, name, dates, t0, { columns, rows, ...extra }, filters = {}) {
-  if (req.query.format === 'csv') {
-    const lines = [columns.map(csvCell).join(','), ...rows.map((r) => columns.map((c) => csvCell(String(r[c] ?? ''))).join(','))];
-    res.setHeader('content-disposition', `attachment; filename="${name}_${dates.startDate}_${dates.endDate}.csv"`);
-    return res.type('text/csv; charset=utf-8').send('﻿' + lines.join('\r\n'));
+// Writes in batches and honors backpressure so 100k+ rows never build one giant string.
+async function streamRows(res, rows, toText, sep) {
+  const BATCH = 2000;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH).map(toText).join(sep);
+    if (res.destroyed) return; // client went away
+    if (!res.write((i ? sep : '') + chunk)) await new Promise((r) => (res.once('drain', r), res.once('close', r)));
   }
-  res.json({
+}
+
+async function send(req, res, name, dates, t0, { columns, rows, ...extra }, filters = {}) {
+  if (req.query.format === 'csv') {
+    res.setHeader('content-disposition', `attachment; filename="${name}_${dates.startDate}_${dates.endDate}.csv"`);
+    res.type('text/csv; charset=utf-8');
+    res.write('﻿' + columns.map(csvCell).join(',') + (rows.length ? '\r\n' : ''));
+    await streamRows(res, rows, (r) => r.map(csvCell).join(','), '\r\n');
+    return res.end();
+  }
+  const head = {
     report: name,
     filters: { fechaInicial: dates.startDate, fechaFinal: dates.endDate, ...filters },
     ...extra,
     count: rows.length,
     elapsedMs: Date.now() - t0,
     columns,
-    rows,
-  });
+  };
+  res.type('application/json; charset=utf-8');
+  res.write(JSON.stringify(head).slice(0, -1) + ',"rows":[');
+  await streamRows(res, rows, (r) => JSON.stringify(Object.fromEntries(columns.map((c, i) => [c, r[i]]))), ',');
+  res.end(']}');
 }
 
 // Viaje + SAP plate (joined by Legvia codigo), excluding Concepto gasto = PEAJE ELECTRÓNICO.
@@ -93,7 +111,7 @@ app.get('/api/reports/legalizacion-viaje-sap', async (req, res, next) => {
         : String(req.query.excluirConcepto).split(',').map((s) => s.trim()).filter(Boolean);
     const t0 = Date.now();
     const result = await runViajeWithSapPlate(dates, excluded);
-    send(req, res, 'legalizacion-viaje-sap', dates, t0, result, { excluirConcepto: excluded });
+    await send(req, res, 'legalizacion-viaje-sap', dates, t0, result, { excluirConcepto: excluded });
   } catch (e) {
     next(e);
   }
@@ -105,7 +123,7 @@ app.get('/api/reports/:name', async (req, res, next) => {
     const dates = parseDates(req.query);
     const t0 = Date.now();
     const result = await runReportRange(req.params.name, def, dates);
-    send(req, res, req.params.name, dates, t0, result);
+    await send(req, res, req.params.name, dates, t0, result);
   } catch (e) {
     next(e);
   }

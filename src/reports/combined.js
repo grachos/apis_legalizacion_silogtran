@@ -40,9 +40,11 @@ export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXC
 
   // Index SAP plates by code; a code with several distinct plates keeps them all.
   const plates = new Map();
+  const sCodeI = sap.columns.indexOf(sCode);
+  const sPlateI = sap.columns.indexOf(sPlate);
   for (const r of sap.rows) {
-    const key = String(r[sCode] ?? '').trim();
-    const plate = String(r[sPlate] ?? '').trim();
+    const key = String(r[sCodeI] ?? '').trim();
+    const plate = String(r[sPlateI] ?? '').trim();
     if (!key || !plate) continue;
     if (!plates.has(key)) plates.set(key, new Set());
     plates.get(key).add(plate);
@@ -52,14 +54,16 @@ export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXC
   let excludedCount = 0;
   let unmatched = 0;
   const rows = [];
+  const vCodeI = viaje.columns.indexOf(vCode);
+  const vConceptI = vConcept ? viaje.columns.indexOf(vConcept) : -1;
   for (const r of viaje.rows) {
-    if (vConcept && excluded.has(norm(r[vConcept]))) {
+    if (vConceptI >= 0 && excluded.has(norm(r[vConceptI]))) {
       excludedCount++;
       continue;
     }
-    const found = plates.get(String(r[vCode] ?? '').trim());
+    const found = plates.get(String(r[vCodeI] ?? '').trim());
     if (!found) unmatched++;
-    rows.push({ ...r, placa_sap: found ? [...found].join(', ') : '', cruce_sap: Boolean(found) });
+    rows.push([...r, found ? [...found].join(', ') : '', Boolean(found)]);
   }
 
   return {
