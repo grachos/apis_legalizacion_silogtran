@@ -4,17 +4,18 @@ import express from 'express';
 import { withSession, sessionActive } from './session.js';
 import { SilogtranError } from './silogtran.js';
 import { REPORTS } from './reports/index.js';
-import { runReport, debugReport } from './reports/engine.js';
+import { debugReport } from './reports/engine.js';
+import { runReportRange, cacheStats, clearCache } from './reports/range.js';
 import { runViajeWithSapPlate, DEFAULT_EXCLUDED_CONCEPTS } from './reports/combined.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_RANGE_DAYS = Number(process.env.MAX_RANGE_DAYS || 366);
+const MAX_RANGE_DAYS = Number(process.env.MAX_RANGE_DAYS || 731);
 
 export const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-app.get('/health', (_req, res) => res.json({ ok: true, sessionActive: sessionActive() }));
+app.get('/health', (_req, res) => res.json({ ok: true, sessionActive: sessionActive(), cache: cacheStats() }));
 
 function requireApiKey(req, res, next) {
   const expected = process.env.API_KEY || '';
@@ -27,6 +28,11 @@ function requireApiKey(req, res, next) {
   next();
 }
 app.use('/api', requireApiKey);
+
+app.post('/api/cache/clear', (_req, res) => {
+  clearCache();
+  res.json({ ok: true });
+});
 
 app.get('/api/reports', (_req, res) =>
   res.json([
@@ -86,7 +92,7 @@ app.get('/api/reports/legalizacion-viaje-sap', async (req, res, next) => {
         ? DEFAULT_EXCLUDED_CONCEPTS
         : String(req.query.excluirConcepto).split(',').map((s) => s.trim()).filter(Boolean);
     const t0 = Date.now();
-    const result = await withSession((c) => runViajeWithSapPlate(c, dates, excluded));
+    const result = await runViajeWithSapPlate(dates, excluded);
     send(req, res, 'legalizacion-viaje-sap', dates, t0, result, { excluirConcepto: excluded });
   } catch (e) {
     next(e);
@@ -98,7 +104,7 @@ app.get('/api/reports/:name', async (req, res, next) => {
     const def = getReport(req);
     const dates = parseDates(req.query);
     const t0 = Date.now();
-    const result = await withSession((c) => runReport(c, def, dates));
+    const result = await runReportRange(req.params.name, def, dates);
     send(req, res, req.params.name, dates, t0, result);
   } catch (e) {
     next(e);

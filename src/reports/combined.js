@@ -2,7 +2,7 @@
 // excluding rows whose "Concepto gasto" is in the excluded list (default: PEAJE ELECTRÓNICO).
 import { SilogtranError } from '../silogtran.js';
 import { REPORTS } from './index.js';
-import { runReport } from './engine.js';
+import { runReportRange } from './range.js';
 
 export const DEFAULT_EXCLUDED_CONCEPTS = ['PEAJE ELECTRÓNICO'];
 
@@ -26,9 +26,9 @@ const isLegviaCode = (n) => n.includes('legvia') && n.includes('codigo');
 const isPlate = (n) => n.includes('placa') || n === 'vehiculo';
 const isConcept = (n) => n.includes('concepto') && n.includes('gasto');
 
-export async function runViajeWithSapPlate(client, dates, excludedConcepts = DEFAULT_EXCLUDED_CONCEPTS) {
-  const viaje = await runReport(client, REPORTS['legalizacion-viaje'], dates);
-  const sap = await runReport(client, REPORTS['legalizacion-sap'], dates);
+export async function runViajeWithSapPlate(dates, excludedConcepts = DEFAULT_EXCLUDED_CONCEPTS) {
+  const viaje = await runReportRange('legalizacion-viaje', REPORTS['legalizacion-viaje'], dates);
+  const sap = await runReportRange('legalizacion-sap', REPORTS['legalizacion-sap'], dates);
 
   const vCode = findColumn(viaje.columns, isLegviaCode, 'Legvia codigo', 'legalizacion-viaje');
   const sCode = findColumn(sap.columns, isLegviaCode, 'Legvia codigo', 'legalizacion-sap');
@@ -65,6 +65,8 @@ export async function runViajeWithSapPlate(client, dates, excludedConcepts = DEF
   return {
     columns: [...viaje.columns, 'placa_sap', 'cruce_sap'],
     rows,
+    months: viaje.months,
+    cacheHits: viaje.cacheHits + sap.cacheHits,
     stats: {
       viajeRows: viaje.rows.length,
       sapRows: sap.rows.length,

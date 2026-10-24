@@ -30,10 +30,14 @@ curl -H "x-api-key: $API_KEY" "https://<servicio>.onrender.com/api/reports/legal
   automáticamente. Si Silogtran usa otros nombres, fíjalos en `src/reports/index.js` → `fields`
   usando la salida de `/debug`.
 - Peticiones serializadas (PRADO guarda estado por sesión).
+- Rangos largos se dividen por **mes calendario**; los meses cerrados quedan en caché en memoria
+  (`CACHE_TTL_HOURS`, 24 h por defecto; `0` desactiva). El mes en curso siempre se regenera.
+  `POST /api/cache/clear` vacía la caché. Rango máximo `MAX_RANGE_DAYS` (731 por defecto).
+  Los logs muestran filas y tiempo por mes (`[report] ...`).
 
 ## Variables de entorno
 Ver `.env.example`: `SILOG_BASE_URL`, `SILOG_USER`, `SILOG_PASSWORD`, `API_KEY` (obligatorias),
-`SILOG_COST_CENTER`, `WAF_CHROME_PATH`, `WAF_WAIT_SEC`, `SILOG_TIMEOUT_SEC`, `MAX_RANGE_DAYS`.
+`SILOG_COST_CENTER`, `CACHE_TTL_HOURS`, `WAF_CHROME_PATH`, `WAF_WAIT_SEC`, `SILOG_TIMEOUT_SEC`, `MAX_RANGE_DAYS`.
 
 ## Local
 ```bash
