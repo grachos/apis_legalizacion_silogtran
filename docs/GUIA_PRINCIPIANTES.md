@@ -130,10 +130,14 @@ clave responde *"no autorizado"*.
 
 Todos los informes aceptan `&format=csv` para bajarlos como archivo CSV (pesa la mitad que JSON).
 
+Además, la API **comprime** (gzip) las respuestas, como un archivo .zip que el navegador,
+Google Sheets o curl descomprimen solos. En curl agrega `--compressed`. Esto ahorra el
+"tráfico de salida" de Render, que en el plan gratis es de **5 GB al mes**.
+
 Ejemplo (en CMD, todo en una línea; cambia `TU_API_KEY`):
 
 ```
-curl -H "x-api-key: TU_API_KEY" "https://apis-legalizacion-silogtran.onrender.com/api/reports/legalizacion-viaje-sap?fechaInicial=2026-01-01&fechaFinal=2026-10-24&format=csv" -o viaje_sap.csv
+curl -H "x-api-key: TU_API_KEY" "https://apis-legalizacion-silogtran.onrender.com/api/reports/legalizacion-viaje-sap?fechaInicial=2026-01-01&fechaFinal=2026-10-24&format=csv" --compressed -o viaje_sap.csv
 ```
 
 > En CMD la URL **siempre entre comillas dobles**. Sin ellas, el `&` corta el comando
@@ -234,6 +238,9 @@ gratis**, que tiene reglas:
 
 - Si pasan **15 minutos sin uso, se duerme**. Despertarlo tarda ~1 minuto.
 - Da **750 horas al mes** (solo cuentan las horas despierto).
+- Da **5 GB de tráfico de salida al mes**. Si se pasa (sin tarjeta registrada), Render apaga el
+  servicio hasta el mes siguiente. Por eso: compresión gzip, `format=csv` y no refrescar el informe
+  anual cada hora.
 - Su disco es **temporal**: lo que guarda se borra al reiniciar (por eso la caché persistente va en
   Supabase).
 

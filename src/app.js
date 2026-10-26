@@ -1,6 +1,7 @@
 // Express API: static API key auth, report endpoints (JSON or CSV), health check.
 import crypto from 'node:crypto';
 import express from 'express';
+import compression from 'compression';
 import { withSession, sessionActive } from './session.js';
 import { SilogtranError } from './silogtran.js';
 import { REPORTS } from './reports/index.js';
@@ -15,6 +16,8 @@ const MAX_RANGE_DAYS = Number(process.env.MAX_RANGE_DAYS || 731);
 export const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+// gzip responses (CSV/JSON compress ~8-10x) to save Render's outbound bandwidth.
+app.use(compression({ threshold: 1024, level: 6 }));
 
 app.get('/health', (_req, res) => res.json({ ok: true, sessionActive: sessionActive(), cache: cacheStats() }));
 

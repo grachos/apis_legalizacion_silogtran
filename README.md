@@ -43,7 +43,7 @@ El cruzado agrega `stats` (`viajeRows`, `sapRows`, `excludedByConcept`, `exclude
 ```bash
 curl -H "x-api-key: $API_KEY" \
   "https://apis-legalizacion-silogtran.onrender.com/api/reports/legalizacion-viaje-sap?fechaInicial=2026-01-01&fechaFinal=2026-10-24&format=csv" \
-  -o viaje_sap.csv
+  --compressed -o viaje_sap.csv
 ```
 
 ### Terceros (para el RPA de MyEInvoice)
@@ -96,6 +96,9 @@ curl -H "x-api-key: $API_KEY" "https://apis-legalizacion-silogtran.onrender.com/
 5. **Cruce** (`src/reports/combined.js`): índice SAP *Legvia codigo → Vehiculo* sobre todo el rango
    (un código puede tener su SAP en otro mes), filtro de conceptos y anulados por mes.
 6. **Salida en streaming**: JSON/CSV se escriben por bloques (no se arma todo en memoria).
+7. **Compresión gzip** (`compression`, respuestas > 1 KB): los clientes que envían
+   `Accept-Encoding: gzip` (curl `--compressed`, navegadores, Google Sheets) reciben los datos
+   comprimidos ~8–10×, para ahorrar el tráfico de salida de Render (5 GB/mes en free).
 
 ### Caché
 
